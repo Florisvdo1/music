@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Vocal/Instrumental Split (Client-Side)</title>
+  <!-- 
+    Single-file solution using FFmpeg.WASM from CDN. 
+    This example uses version 0.11.5. 
+    Check https://github.com/ffmpegwasm/ffmpeg.wasm for the latest.
+  -->
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #fafafa;
+      margin: 0; 
+      padding: 0;
+    }
+    .container {
+      width: 420px;
+      margin: 5% auto;
+      background: #fff;
+      padding: 2rem;
+      border-radius: 6px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      text-align: center;
+    }
+    h1 {
+      margin-bottom: 0.5rem;
+    }
+    p {
+      margin-top: 0.25rem;
+      margin-bottom: 1.5rem;
+    }
+    button {
+      cursor: pointer;
+      background: #2196f3;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      font-size: 1rem;
+      margin: 0.5rem;
+    }
+    button:hover {
+      background: #1976d2;
+    }
+    .hidden {
+      display: none;
+    }
+    .progress {
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      color: #555;
+    }
+    .download-btns {
+      margin-top: 1.5rem;
+    }
+    a.download-link {
+      display: inline-block;
+      margin: 0.5rem;
+      padding: 10px 20px;
+      background: #4caf50;
+      color: #fff;
+      text-decoration: none;
+      border-radius: 4px;
+    }
+    a.download-link:hover {
+      background: #388e3c;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Split Vocals from Instrumentals</h1>
+  <p><b>All processing is done client-side in your browser.</b></p>
+
+  <!-- File input -->
+  <input type="file" id="audioInput" accept="audio/*" />
+
+  <!-- Progress display -->
+  <div id="progressMsg" class="progress hidden"></div>
+
+  <!-- Download Buttons -->
+  <div id="downloadSection" class="download-btns hidden">
+    <a id="downloadInstrumental" class="download-link" href="#" download="instrumental.wav">Download Instrumental</a>
+    <a id="downloadVocal" class="download-link" href="#" download="vocal_original">Download Vocal (Original)</a>
+  </div>
+</div>
+
+<!-- FFmpeg.WASM from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.5/dist/ffmpeg.min.js"></script>
+<script>
+  const { createFFmpeg, fetchFile } = FFmpeg;
+
+  const audioInput = document.getElementById('audioInput');
+  const progressMsg = document.getElementById('progressMsg');
+  const downloadSection = document.getElementById('downloadSection');
+  const downloadInstrumental = document.getElementById('downloadInstrumental');
+  const downloadVocal = document.getElementById('downloadVocal');
+
+  const ffmpeg = createFFmpeg({
+    log: true,
+    // Called whenever FFmpeg prints something (for advanced debug)
+    // logger: ({ type, message }) => { console.log(type, message) },
+    progress: ({ ratio }) => {
+      // ratio is from 0 to 1
+      progressMsg.textContent = `Processing... ${(ratio * 100).toFixed(2)}%`;
+    }
+  });
+
+  let originalFileName = '';
+  let originalFileData = null; // For user to download as "vocals"
+
+  audioInput.addEventListener('change', async (event) => {
+    if (!event.target.files.length) return;
+
+    // Hide downloads, show progress
+    downloadSection.classList.add('hidden');
+    progressMsg.classList.remove('hidden');
+    progressMsg.textContent = 'Loading FFmpeg.WASM, please wait...';
+
+    const file = event.target.files[0];
+    originalFileName = file.name;
+
+    // Convert file to array buffer so we can pass it to FFmpeg.WASM
+    const arrayBuffer = await file.arrayBuffer();
+    originalFileData = new Uint8Array(arrayBuffer);
+
+    // Load FFmpeg core if not loaded yet
+    if (!ffmpeg.isLoaded()) {
+      await ffmpeg.load();
+    }
+
+    // Now, write the file to FFmpeg's virtual filesystem
+    const inputName = 'input_audio';
+    await ffmpeg.FS('writeFile', inputName, originalFileData);
+
+    // We'll produce an instrumental output named 'output_instrumental.wav'
+    const outputName = 'output_instrumental.wav';
+
+    // Update progress
+    progressMsg.textContent = 'Applying Karaoke Filter (this might take a while)...';
+
+    // Run the karaoke filter
+    // The command:
+    //   ffmpeg -i input_audio -af stereotools=mode=karaoke output_instrumental.wav
+    try {
+      await ffmpeg.run(
+        '-i', inputName,
+        '-af', 'stereotools=mode=karaoke',
+        outputName
+      );
+    } catch (err) {
+      console.error(err);
+      alert('Error during FFmpeg processing: ' + err.message);
+      progressMsg.textContent = 'Error occurred. See console for details.';
+      return;
+    }
+
+    // We can read the processed (instrumental) file from FFmpeg FS
+    const instrumentalData = ffmpeg.FS('readFile', outputName);
+
+    // Convert to Blob for user to download
+    const instrumentalBlob = new Blob([instrumentalData.buffer], { type: 'audio/wav' });
+    const instrumentalUrl = URL.createObjectURL(instrumentalBlob);
+
+    // Also create a blob URL for the original file (the "vocal" track)
+    // We'll keep it as is, in the same format user uploaded
+    const originalBlob = new Blob([originalFileData.buffer], { type: file.type });
+    const originalUrl = URL.createObjectURL(originalBlob);
+
+    // Assign to download links
+    downloadInstrumental.href = instrumentalUrl;
+    downloadVocal.href = originalUrl;
+    downloadVocal.download = 'vocal_original' + file.name.substring(file.name.lastIndexOf('.')) || '';
+
+    // Show the download buttons
+    progressMsg.textContent = 'Done!';
+    downloadSection.classList.remove('hidden');
+  });
+</script>
+</body>
+</html>
